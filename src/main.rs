@@ -1,16 +1,23 @@
 use failure::{err_msg, Fallible};
-use headless_chrome::Browser;
+use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
+use rocket::{launch, post, response::status, routes, Rocket};
+use rocket_contrib::json::Json;
+use teloxide::types::Update;
 
 fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
 	let browser = Browser::default()?;
 
-	let tab = browser.wait_for_initial_tab()?;
-
-	// Navigate to dndbeyond
-	tab.navigate_to(url)?;
+	let tab = browser.new_tab_with_options(CreateTarget {
+		url,
+		width: None,
+		height: None,
+		browser_context_id: None,
+		enable_begin_frame_control: None,
+	})?;
 
 	// Wait for network/javascript/dom to make the skill list available
-	let element = tab.wait_for_element("div.ct-skills")?;
+	let element = tab
+		.wait_for_element_with_custom_timeout("div.ct-skills", std::time::Duration::from_secs(10))?;
 
 	// Parse the skill list
 	let skills = element
@@ -49,8 +56,19 @@ fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
 	Ok(skills)
 }
 
-fn main() -> Fallible<()> {
-	let modifiers = download_skill_modifiers("https://www.dndbeyond.com/characters/31859887/HUQLxj")?;
-	println!("{:?}", modifiers);
-	Ok(())
+#[post("/", format = "application/json", data = "<update>")]
+fn index(update: Json<Update>) -> status::Accepted<()> {
+	std::thread::spawn(move || {
+		match download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D") {
+			Ok(skill_modifiers) => println!("Skill modifiers: {:?}", skill_modifiers),
+			Err(error) => println!("Fail: {}", error),
+		};
+	});
+
+	status::Accepted(Some(()))
+}
+
+#[launch]
+fn rocket() -> Rocket {
+	rocket::ignite().mount("/", routes![index])
 }

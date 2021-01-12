@@ -9,3 +9,6 @@ edition = "2018"
 [dependencies]
 failure = "0.1.8"
 headless_chrome = { version = "0.9.0", default-features = false }
+rocket = { git = "https://github.com/SergioBenitez/Rocket", rev = "9671115796e42865eaebd020ac27542802027b02" }
+rocket_contrib = { git = "https://github.com/SergioBenitez/Rocket", rev = "9671115796e42865eaebd020ac27542802027b02" }
+teloxide = { version = "0.3.3", default-features = false }
