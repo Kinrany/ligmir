@@ -1,6 +1,6 @@
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
-use rocket::{launch, post, response::status, routes, Rocket};
+use rocket::{get, launch, post, response::status, routes, Rocket};
 use rocket_contrib::json::Json;
 use teloxide::types::Update;
 
@@ -56,8 +56,8 @@ fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
 	Ok(skills)
 }
 
-#[post("/", format = "application/json", data = "<update>")]
-fn index(update: Json<Update>) -> status::Accepted<()> {
+#[post("/", format = "application/json", data = "<_update>")]
+fn index(_update: Json<Update>) -> status::Accepted<()> {
 	std::thread::spawn(move || {
 		match download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D") {
 			Ok(skill_modifiers) => println!("Skill modifiers: {:?}", skill_modifiers),
@@ -68,7 +68,12 @@ fn index(update: Json<Update>) -> status::Accepted<()> {
 	status::Accepted(Some(()))
 }
 
+#[get("/health")]
+fn health() -> &'static str {
+	"OK"
+}
+
 #[launch]
 fn rocket() -> Rocket {
-	rocket::ignite().mount("/", routes![index])
+	rocket::ignite().mount("/", routes![index, health])
 }
