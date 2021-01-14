@@ -98,6 +98,6 @@ async fn telegram_setwebhook(token: String, host: String) -> Result<(), Status> 
 }
 
 #[launch]
-async fn rocket() -> Rocket {
+fn rocket() -> Rocket {
 	rocket::ignite().mount("/", routes![health, telegram_update, telegram_setwebhook])
 }

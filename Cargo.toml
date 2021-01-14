@@ -14,12 +14,12 @@ reqwest = "0.11.0"
 
 [dependencies.rocket]
 git = "https://github.com/SergioBenitez/Rocket"
-rev = "9671115796e42865eaebd020ac27542802027b02"
+rev = "407e346a6a32da548f8e31d2f684061565467d06"
 default-features = false
 features = ["tls"]
 
 [dependencies.rocket_contrib]
 git = "https://github.com/SergioBenitez/Rocket"
-rev = "9671115796e42865eaebd020ac27542802027b02"
+rev = "407e346a6a32da548f8e31d2f684061565467d06"
 default-features = false
 features = ["json"]
