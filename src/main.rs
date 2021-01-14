@@ -1,10 +1,10 @@
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
-use rocket::{get, launch, post, response::status, routes, Rocket};
+use rocket::{get, http::Status, launch, post, routes, Rocket};
 use rocket_contrib::json::Json;
 use teloxide::types::Update;
 
-fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
+async fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
 	let browser = Browser::default()?;
 
 	let tab = browser.new_tab_with_options(CreateTarget {
@@ -56,24 +56,44 @@ fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
 	Ok(skills)
 }
 
-#[post("/", format = "application/json", data = "<_update>")]
-fn index(_update: Json<Update>) -> status::Accepted<()> {
-	std::thread::spawn(move || {
-		match download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D") {
-			Ok(skill_modifiers) => println!("Skill modifiers: {:?}", skill_modifiers),
-			Err(error) => println!("Fail: {}", error),
-		};
-	});
-
-	status::Accepted(Some(()))
-}
-
 #[get("/health")]
 fn health() -> &'static str {
 	"OK"
 }
 
+#[post(
+	"/telegram/update/<_token>",
+	format = "application/json",
+	data = "<_update>"
+)]
+async fn telegram_update(_token: String, _update: Json<Update>) -> Result<(), Status> {
+	match download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D").await {
+		Ok(skill_modifiers) => {
+			println!("Skill modifiers: {:?}", skill_modifiers);
+			Ok(())
+		}
+		Err(error) => {
+			println!("Fail: {}", error);
+			Err(Status::InternalServerError)
+		}
+	}
+}
+
+#[get("/telegram/setwebhook?<token>&<host>")]
+async fn telegram_setwebhook(token: String, host: String) -> Result<(), Status> {
+	let url = format!(
+		"https://api.telegram.org/bot{}/setWebhook?url=https://{}/telegram_update/{}",
+		token, host, token
+	);
+
+	reqwest::get(&url)
+		.await
+		.map_err(|_| Status::InternalServerError)?;
+
+	Ok(())
+}
+
 #[launch]
 fn rocket() -> Rocket {
-	rocket::ignite().mount("/", routes![index, health])
+	rocket::ignite().mount("/", routes![health, telegram_update, telegram_setwebhook])
 }
