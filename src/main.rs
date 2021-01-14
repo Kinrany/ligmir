@@ -90,11 +90,16 @@ async fn telegram_setwebhook(token: String, host: String) -> Result<(), Status> 
 		token, host, token
 	);
 
-	reqwest::get(&url)
+	let status = reqwest::get(&url)
 		.await
-		.map_err(|_| Status::InternalServerError)?;
+		.map_err(|_| Status::InternalServerError)?
+		.status();
 
-	Ok(())
+	if status.is_success() {
+		Ok(())
+	} else {
+		Err(Status::InternalServerError)
+	}
 }
 
 #[launch]
