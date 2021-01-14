@@ -82,7 +82,7 @@ async fn telegram_update(_token: String, _update: Json<Update>) -> Result<(), St
 #[get("/telegram/setwebhook?<token>&<host>")]
 async fn telegram_setwebhook(token: String, host: String) -> Result<(), Status> {
 	let url = format!(
-		"https://api.telegram.org/bot{}/setWebhook?url=https://{}/telegram_update/{}",
+		"https://api.telegram.org/bot{}/setWebhook?url=https://{}/telegram/update/{}",
 		token, host, token
 	);
 
