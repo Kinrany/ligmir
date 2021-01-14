@@ -1,10 +1,10 @@
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
-use rocket::{get, http::Status, launch, post, routes, Rocket};
+use rocket::{get, http::Status, launch, post, routes, tokio::task::spawn_blocking, Rocket};
 use rocket_contrib::json::Json;
 use teloxide::types::Update;
 
-async fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
+fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
 	let browser = Browser::default()?;
 
 	let tab = browser.new_tab_with_options(CreateTarget {
@@ -67,7 +67,11 @@ fn health() -> &'static str {
 	data = "<_update>"
 )]
 async fn telegram_update(_token: String, _update: Json<Update>) -> Result<(), Status> {
-	match download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D").await {
+	match spawn_blocking(|| {
+		download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D")
+	})
+	.await
+	{
 		Ok(skill_modifiers) => {
 			println!("Skill modifiers: {:?}", skill_modifiers);
 			Ok(())
@@ -94,6 +98,6 @@ async fn telegram_setwebhook(token: String, host: String) -> Result<(), Status> 
 }
 
 #[launch]
-fn rocket() -> Rocket {
+async fn rocket() -> Rocket {
 	rocket::ignite().mount("/", routes![health, telegram_update, telegram_setwebhook])
 }
