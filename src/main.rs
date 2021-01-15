@@ -1,11 +1,6 @@
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
-use rocket::{
-	futures::{self, TryFutureExt},
-	get,
-	http::Status,
-	launch, post, routes, tokio, Rocket,
-};
+use rocket::{futures::TryFutureExt, get, http::Status, launch, post, routes, tokio, Rocket};
 use rocket_contrib::json::Json;
 use teloxide::types::{Message, Update, UpdateKind};
 
