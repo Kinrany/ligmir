@@ -1,6 +1,11 @@
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
-use rocket::{futures::TryFutureExt, get, http::Status, launch, post, routes, tokio, Rocket};
+use rocket::{
+	futures::{self, TryFutureExt},
+	get,
+	http::Status,
+	launch, post, routes, tokio, Rocket,
+};
 use rocket_contrib::json::Json;
 use teloxide::types::{Message, Update, UpdateKind};
 
@@ -61,6 +66,39 @@ fn health() -> &'static str {
 	"OK"
 }
 
+#[tokio::main]
+async fn handle_update(token: String, update: Update) {
+	println!("Spawning thread");
+
+	let (chat, reply_to) = match update {
+		Update {
+			kind: UpdateKind::Message(Message { chat, id, .. }),
+			..
+		} => (chat, id),
+		_ => return,
+	};
+
+	let result = tokio::task::spawn_blocking(|| {
+		download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D")
+	})
+	.await;
+
+	let message = match result {
+		Ok(Ok(s)) => format!("{:?}", s),
+		Ok(Err(err)) => format!("Failed to download modifiers: {}", err),
+		Err(err) => format!("JoinError: {}", err),
+	};
+
+	let text = reqwest::get(&format!(
+		"https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}&reply_to_message_id={}",
+		token, chat.id, message, reply_to
+	))
+	.and_then(|response| response.text())
+	.await;
+
+	println!("Response from Telegram: {:?}", text);
+}
+
 #[post(
 	"/telegram/update/<token>",
 	format = "application/json",
@@ -71,37 +109,7 @@ async fn telegram_update(token: String, update: Json<Update>) {
 
 	println!("Received update: {:?}", update);
 
-	std::thread::spawn(move || async move {
-		println!("Spawning thread");
-
-		let (chat, reply_to) = match update {
-			Update {
-				kind: UpdateKind::Message(Message { chat, id, .. }),
-				..
-			} => (chat, id),
-			_ => return,
-		};
-
-		let result = tokio::task::spawn_blocking(|| {
-			download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D")
-		})
-		.await;
-
-		let message = match result {
-			Ok(Ok(s)) => format!("{:?}", s),
-			Ok(Err(err)) => format!("Failed to download modifiers: {}", err),
-			Err(err) => format!("JoinError: {}", err),
-		};
-
-		let text = reqwest::get(&format!(
-			"https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}&reply_to_message_id={}",
-			token, chat.id, message, reply_to
-		))
-		.and_then(|response| response.text())
-		.await;
-
-		println!("Response from Telegram: {:?}", text);
-	});
+	std::thread::spawn(move || handle_update(token, update));
 }
 
 #[get("/telegram/setwebhook?<token>&<host>")]
