@@ -2,7 +2,7 @@ use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
 use rocket::{get, http::Status, launch, post, routes, tokio::task::spawn_blocking, Rocket};
 use rocket_contrib::json::Json;
-use teloxide::types::Update;
+use teloxide::types::{Message, Update, UpdateKind};
 
 fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
 	let browser = Browser::default()?;
@@ -62,24 +62,39 @@ fn health() -> &'static str {
 }
 
 #[post(
-	"/telegram/update/<_token>",
+	"/telegram/update/<token>",
 	format = "application/json",
-	data = "<_update>"
+	data = "<update>"
 )]
-async fn telegram_update(_token: String, _update: Json<Update>) -> Result<(), Status> {
-	match spawn_blocking(|| {
+async fn telegram_update(token: String, update: Json<Update>) {
+	let update = update.0;
+
+	let (chat, reply_to) = match update {
+		Update {
+			kind: UpdateKind::Message(Message { chat, id, .. }),
+			..
+		} => (chat, id),
+		_ => return,
+	};
+
+	let result = spawn_blocking(|| {
 		download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D")
 	})
+	.await;
+
+	let message = match result {
+		Ok(Ok(s)) => format!("{:?}", s),
+		Ok(Err(err)) => format!("{}", err),
+		Err(err) => format!("{}", err),
+	};
+
+	if let Err(err) = reqwest::get(&format!(
+		"https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}&reply_to_message_id={}",
+		token, chat.id, message, reply_to
+	))
 	.await
 	{
-		Ok(skill_modifiers) => {
-			println!("Skill modifiers: {:?}", skill_modifiers);
-			Ok(())
-		}
-		Err(error) => {
-			println!("Fail: {}", error);
-			Err(Status::InternalServerError)
-		}
+		println!("Failed to send message: {}", err);
 	}
 }
 
