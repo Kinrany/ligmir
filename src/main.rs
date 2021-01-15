@@ -74,7 +74,10 @@ async fn handle_update(token: String, update: Update) {
 	};
 
 	let result = tokio::task::spawn_blocking(|| {
-		download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D")
+		println!("Beginning to download");
+		let skills = download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D");
+		println!("Finished downloading");
+		skills
 	})
 	.await;
 
