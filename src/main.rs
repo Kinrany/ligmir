@@ -72,6 +72,8 @@ async fn telegram_update(token: String, update: Json<Update>) {
 	println!("Received update: {:?}", update);
 
 	std::thread::spawn(move || async move {
+		println!("Spawning thread");
+
 		let (chat, reply_to) = match update {
 			Update {
 				kind: UpdateKind::Message(Message { chat, id, .. }),
@@ -91,14 +93,14 @@ async fn telegram_update(token: String, update: Json<Update>) {
 			Err(err) => format!("JoinError: {}", err),
 		};
 
-		if let Err(err) = reqwest::get(&format!(
+		let text = reqwest::get(&format!(
 			"https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}&reply_to_message_id={}",
 			token, chat.id, message, reply_to
 		))
-		.await
-		{
-			println!("Failed to send message: {}", err);
-		}
+		.and_then(|response| response.text())
+		.await;
+
+		println!("Response from Telegram: {:?}", text);
 	});
 }
 
