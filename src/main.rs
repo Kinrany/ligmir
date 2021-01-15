@@ -1,6 +1,6 @@
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
-use rocket::{get, http::Status, launch, post, routes, tokio, Rocket};
+use rocket::{futures::TryFutureExt, get, http::Status, launch, post, routes, tokio, Rocket};
 use rocket_contrib::json::Json;
 use teloxide::types::{Message, Update, UpdateKind};
 
@@ -103,25 +103,20 @@ async fn telegram_update(token: String, update: Json<Update>) {
 }
 
 #[get("/telegram/setwebhook?<token>&<host>")]
-async fn telegram_setwebhook(token: String, host: String) -> Result<(), Status> {
-	let url = format!(
-		"https://api.telegram.org/bot{}/setWebhook?url=https://{}/telegram/update/{}",
-		token, host, token
+async fn telegram_setwebhook(token: String, host: String) -> Result<String, Status> {
+	let update_url = format!("https://{}/telegram/update/{}", host, token);
+	let telegram_setwebhook_request_url = format!(
+		"https://api.telegram.org/bot{}/setWebhook?url={}",
+		token, update_url
 	);
 
-	match reqwest::get(&url).await {
-		Ok(response) => {
-			println!(
-				"setwebhook ok: {}",
-				response.text().await.unwrap_or("no text error".to_owned())
-			);
-			Ok(())
-		}
-		Err(err) => {
+	reqwest::get(&telegram_setwebhook_request_url)
+		.and_then(|response| response.text())
+		.await
+		.map_err(|err| {
 			println!("setwebhook error: {}", err);
-			Err(Status::InternalServerError)
-		}
-	}
+			Status::InternalServerError
+		})
 }
 
 #[launch]
