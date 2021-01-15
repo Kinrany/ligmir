@@ -1,6 +1,6 @@
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
-use rocket::{get, http::Status, launch, post, routes, tokio::task::spawn_blocking, Rocket};
+use rocket::{get, http::Status, launch, post, routes, tokio, Rocket};
 use rocket_contrib::json::Json;
 use teloxide::types::{Message, Update, UpdateKind};
 
@@ -69,33 +69,37 @@ fn health() -> &'static str {
 async fn telegram_update(token: String, update: Json<Update>) {
 	let update = update.0;
 
-	let (chat, reply_to) = match update {
-		Update {
-			kind: UpdateKind::Message(Message { chat, id, .. }),
-			..
-		} => (chat, id),
-		_ => return,
-	};
+	println!("Received update: {:?}", update);
 
-	let result = spawn_blocking(|| {
-		download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D")
-	})
-	.await;
+	std::thread::spawn(move || async move {
+		let (chat, reply_to) = match update {
+			Update {
+				kind: UpdateKind::Message(Message { chat, id, .. }),
+				..
+			} => (chat, id),
+			_ => return,
+		};
 
-	let message = match result {
-		Ok(Ok(s)) => format!("{:?}", s),
-		Ok(Err(err)) => format!("{}", err),
-		Err(err) => format!("{}", err),
-	};
+		let result = tokio::task::spawn_blocking(|| {
+			download_skill_modifiers("https://www.dndbeyond.com/characters/27570282/JhoG2D")
+		})
+		.await;
 
-	if let Err(err) = reqwest::get(&format!(
-		"https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}&reply_to_message_id={}",
-		token, chat.id, message, reply_to
-	))
-	.await
-	{
-		println!("Failed to send message: {}", err);
-	}
+		let message = match result {
+			Ok(Ok(s)) => format!("{:?}", s),
+			Ok(Err(err)) => format!("Failed to download modifiers: {}", err),
+			Err(err) => format!("JoinError: {}", err),
+		};
+
+		if let Err(err) = reqwest::get(&format!(
+			"https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}&reply_to_message_id={}",
+			token, chat.id, message, reply_to
+		))
+		.await
+		{
+			println!("Failed to send message: {}", err);
+		}
+	});
 }
 
 #[get("/telegram/setwebhook?<token>&<host>")]
