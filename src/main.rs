@@ -110,7 +110,13 @@ async fn telegram_setwebhook(token: String, host: String) -> Result<(), Status> 
 	);
 
 	match reqwest::get(&url).await {
-		Ok(_) => Ok(()),
+		Ok(response) => {
+			println!(
+				"setwebhook ok: {}",
+				response.text().await.unwrap_or("no text error".to_owned())
+			);
+			Ok(())
+		}
 		Err(err) => {
 			println!("setwebhook error: {}", err);
 			Err(Status::InternalServerError)
