@@ -1,7 +1,7 @@
 from ekidd/rust-musl-builder as build
 workdir /usr/src/ligmir
 
-run sudo chown -R . && mkdir -p src/ && touch src/lib.rs
+run sudo chown -R rust:rust . && mkdir -p src/ && touch src/lib.rs
 copy Cargo.toml Cargo.lock ./
 run cargo build --locked --lib --release --target x86_64-unknown-linux-musl
 
