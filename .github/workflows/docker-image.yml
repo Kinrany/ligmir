@@ -10,6 +10,22 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+
     - uses: actions/checkout@v2
+
+    - name: Install doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+    - name: Authenticate Docker with DigitalOcean registry
+      run: doctl registry login
+
     - name: Build the image
-      run: docker build . --file Dockerfile --tag ligmir:latest
+      run: docker build . --file Dockerfile --tag registry.digitalocean.com/${{ secrets.DIGITALOCEAN_CONTAINER_REGISTRY }}/image:ligmir-${{ github.sha }} --tag registry.digitalocean.com/${{ secrets.DIGITALOCEAN_CONTAINER_REGISTRY }}/image:ligmir-latest
+
+    - name: Push the image to DigitalOcean
+      run: docker push registry.digitalocean.com/${{ secrets.DIGITALOCEAN_CONTAINER_REGISTRY }}/image:ligmir-${{ github.sha }}
+
+    - name: Push the image as 'latest'
+      run: docker push registry.digitalocean.com/${{ secrets.DIGITALOCEAN_CONTAINER_REGISTRY }}/image:ligmir-latest
