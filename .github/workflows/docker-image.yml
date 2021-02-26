@@ -3,7 +3,9 @@ name: Docker Image CI
 on:
   push:
     branches: [ main ]
-  pull_request:
+## Shouldn't run on pull requests while the last step
+## is set to push images tagged with 'latest'.
+#  pull_request:
   workflow_dispatch:
 
 jobs:
