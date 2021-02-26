@@ -1,10 +1,5 @@
-from rust as build
+from ekidd/rust-musl-builder as build
 workdir /usr/src/ligmir
-
-run rustup target add x86_64-unknown-linux-musl && \
-  apt-get update && \
-  apt-get install -y musl-tools && \
-  apt-get install -y libssl-dev
 
 run mkdir src/ ; touch src/lib.rs
 copy Cargo.toml Cargo.lock ./
