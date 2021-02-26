@@ -5,10 +5,9 @@ use rocket_contrib::json::Json;
 use teloxide::types::{Message, Update, UpdateKind};
 
 fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
-	let browser = if let Ok(url) = std::env::var("LIGMIR_BROWSER_URL") {
-		Browser::connect(url)?
-	} else {
-		Browser::default()?
+	let browser = match std::env::var("LIGMIR_BROWSER_URL") {
+		Ok(browser_url) => Browser::connect(browser_url)?,
+		Err(_) => return Err(err_msg("LIGMIR_BROWSER_URL not specified")),
 	};
 
 	let tab = browser.new_tab_with_options(CreateTarget {
