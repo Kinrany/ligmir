@@ -2,6 +2,7 @@ use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
 use rocket::{futures::TryFutureExt, get, http::Status, launch, post, routes, tokio, Rocket};
 use rocket_contrib::json::Json;
+use strsim::damerau_levenshtein as edit_distance;
 use teloxide::types::{Message, Update, UpdateKind};
 
 fn download_skill_modifiers(url: &str) -> Fallible<Vec<(String, i32)>> {
@@ -89,7 +90,16 @@ async fn handle_update(token: String, update: Update) {
 	.await;
 
 	let message = match result {
-		Ok(Ok(s)) => format!("{:?}", s),
+		Ok(Ok(skills)) => {
+			let entered_skill_name = "Acroabtics";
+			let skill_with_closest_name = skills
+				.into_iter()
+				.min_by_key(|(name, _)| edit_distance(name, entered_skill_name));
+			match skill_with_closest_name {
+				None => "Internal error: skill list is empty".to_string(),
+				Some((name, modifier)) => format!("{}: {}", name, modifier),
+			}
+		}
 		Ok(Err(err)) => format!("Failed to download modifiers: {}", err),
 		Err(err) => format!("JoinError: {}", err),
 	};
