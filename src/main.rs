@@ -5,18 +5,16 @@ use rocket::{
 };
 use rocket_contrib::json::Json;
 use strsim::damerau_levenshtein as edit_distance;
-use teloxide::types::{
-	Chat, MediaKind, MediaText, Message, MessageCommon, MessageKind, Update, UpdateKind,
-};
+use telegram_bot::{ChatId, Message, MessageChat, MessageId, MessageKind, Update, UpdateKind};
 
 struct SkillCheckRequest {
-	chat: Chat,
-	message_id: i32,
+	chat: MessageChat,
+	message_id: MessageId,
 	skill: Option<String>,
 	charsheet_url: Option<String>,
 }
 
-async fn send_message(token: &str, chat_id: i64, message: &str, reply_to: i32) {
+async fn send_message(token: &str, chat_id: ChatId, message: &str, reply_to: MessageId) {
 	let result = reqwest::get(&format!(
 		"https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}&reply_to_message_id={}",
 		token, chat_id, message, reply_to
@@ -107,7 +105,7 @@ impl Config {
 						r#"I can't open "{}" as a charsheet link. It must start with "{}"."#,
 						some_url, origin
 					);
-					send_message(token, request.chat.id, &message, request.message_id).await;
+					send_message(token, request.chat.id(), &message, request.message_id).await;
 					return;
 				}
 				some_url
@@ -138,7 +136,7 @@ impl Config {
 			Err(err) => format!("JoinError: {}", err),
 		};
 
-		send_message(token, request.chat.id, &message, request.message_id).await;
+		send_message(token, request.chat.id(), &message, request.message_id).await;
 	}
 
 	async fn handle_update(self, token: String, update: Update) {
@@ -150,11 +148,7 @@ impl Config {
 					UpdateKind::Message(Message {
 						chat,
 						id,
-						kind:
-							MessageKind::Common(MessageCommon {
-								media_kind: MediaKind::Text(MediaText { text, .. }),
-								..
-							}),
+						kind: MessageKind::Text { data: text, .. },
 						..
 					}),
 				..
