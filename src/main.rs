@@ -6,7 +6,8 @@ use rocket::{
 use rocket_contrib::json::Json;
 use strsim::damerau_levenshtein as edit_distance;
 use teloxide::types::{
-	Chat, MediaKind, MediaText, Message, MessageCommon, MessageKind, Update, UpdateKind,
+	Chat, ChatKind, ChatPrivate, MediaKind, MediaText, Message, MessageCommon, MessageKind, Update,
+	UpdateKind,
 };
 
 struct SkillCheckRequest {
@@ -146,38 +147,40 @@ impl Config {
 		let bot_name = "@ligmir_bot";
 
 		let request = match update {
-		Update {
-			kind:
-				UpdateKind::Message(Message {
-					chat,
-					id,
-					kind:
-						MessageKind::Common(MessageCommon {
-							media_kind: MediaKind::Text(MediaText { text, .. }),
-							..
-						}),
-					..
-				}),
-			..
-		}
-		// Negative `chat.id` = private message
-		if text.starts_with(bot_name) || chat.id < 0 => {
-			let args = text.split_whitespace().filter(|&s| s != bot_name).take(2).collect::<Vec<_>>();
-			let skill = args.get(0).map(ToString::to_string);
-			let charsheet_url = args.get(1).map(ToString::to_string);
+			Update {
+				kind:
+					UpdateKind::Message(Message {
+						chat,
+						id,
+						kind:
+							MessageKind::Common(MessageCommon {
+								media_kind: MediaKind::Text(MediaText { text, .. }),
+								..
+							}),
+						..
+					}),
+				..
+			} => {
+				let args = text
+					.split_whitespace()
+					.filter(|&s| s != bot_name)
+					.take(2)
+					.collect::<Vec<_>>();
+				let skill = args.get(0).map(ToString::to_string);
+				let charsheet_url = args.get(1).map(ToString::to_string);
 
-			Request::SkillCheckRequest(SkillCheckRequest {
-				chat,
-				message_id: id,
-				skill,
-				charsheet_url,
-			})
-		}
-		_ => {
-			println!("Ignoring update.");
-			return;
-		},
-	};
+				Request::SkillCheckRequest(SkillCheckRequest {
+					chat,
+					message_id: id,
+					skill,
+					charsheet_url,
+				})
+			}
+			_ => {
+				println!("Ignoring update.");
+				return;
+			}
+		};
 
 		match request {
 			Request::SkillCheckRequest(skill_check_request) => {
