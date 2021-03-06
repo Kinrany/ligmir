@@ -6,8 +6,7 @@ use rocket::{
 use rocket_contrib::json::Json;
 use strsim::damerau_levenshtein as edit_distance;
 use teloxide::types::{
-	Chat, ChatKind, ChatPrivate, MediaKind, MediaText, Message, MessageCommon, MessageKind, Update,
-	UpdateKind,
+	Chat, MediaKind, MediaText, Message, MessageCommon, MessageKind, Update, UpdateKind,
 };
 
 struct SkillCheckRequest {
@@ -17,15 +16,20 @@ struct SkillCheckRequest {
 	charsheet_url: Option<String>,
 }
 
-async fn send_message(token: &str, chat_id: i64, message: &str, reply_to: i32) -> Fallible<()> {
-	reqwest::get(&format!(
+async fn send_message(token: &str, chat_id: i64, message: &str, reply_to: i32) {
+	let result = reqwest::get(&format!(
 		"https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}&reply_to_message_id={}",
 		token, chat_id, message, reply_to
 	))
 	.and_then(|response| response.text())
-	.await?;
+	.await;
 
-	Ok(())
+	if let Err(err) = result {
+		println!(
+			r#"Failed to send message "{}" to user {} in chat {}: {}"#,
+			message, reply_to, chat_id, err
+		);
+	}
 }
 
 enum Request {
@@ -103,11 +107,7 @@ impl Config {
 						r#"I can't open "{}" as a charsheet link. It must start with "{}"."#,
 						some_url, origin
 					);
-					if let Err(err) =
-						send_message(token, request.chat.id, &message, request.message_id).await
-					{
-						println!("Failed to warn the user about invalid URL: {}", err);
-					}
+					send_message(token, request.chat.id, &message, request.message_id).await;
 					return;
 				}
 				some_url
@@ -138,9 +138,7 @@ impl Config {
 			Err(err) => format!("JoinError: {}", err),
 		};
 
-		if let Err(err) = send_message(token, request.chat.id, &message, request.message_id).await {
-			println!("Failed to send telegram message: {}", err);
-		}
+		send_message(token, request.chat.id, &message, request.message_id).await;
 	}
 
 	async fn handle_update(self, token: String, update: Update) {
