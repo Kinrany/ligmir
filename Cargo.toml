@@ -12,8 +12,7 @@ headless_chrome = { version = "0.9.0", default-features = false }
 strsim = "0.10.0"
 
 [dependencies.telegram-bot]
-git = "https://github.com/Kinrany/telegram-bot"
-rev = "07a9f9a1c76eaab2259bdc6241691187a46d69d1"
+version = "0.8.0"
 default-features = false
 features = ["rustls"]
 

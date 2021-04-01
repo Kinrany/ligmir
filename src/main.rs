@@ -113,7 +113,7 @@ impl Config {
 			None => "https://www.dndbeyond.com/characters/27570282/JhoG2D".to_string(),
 		};
 
-		let result = tokio::task::spawn_blocking(move || {
+		let skill_modifiers_downloading_result = tokio::task::spawn_blocking(move || {
 			println!("Beginning to download");
 			let skills = self.download_skill_modifiers(&charsheet_url);
 			println!("Finished downloading");
@@ -121,7 +121,7 @@ impl Config {
 		})
 		.await;
 
-		let message = match result {
+		let message = match skill_modifiers_downloading_result {
 			Ok(Ok(skills)) => {
 				let entered_skill_name = request.skill.unwrap_or("Perception".to_string());
 				let skill_with_closest_name = skills
