@@ -30,10 +30,6 @@ async fn send_message(token: &str, chat_id: ChatId, message: &str, reply_to: Mes
 	}
 }
 
-enum Request {
-	SkillCheckRequest(SkillCheckRequest),
-}
-
 #[derive(Clone, Debug)]
 struct Config {
 	browser_url: String,
@@ -142,7 +138,7 @@ impl Config {
 	async fn handle_update(self, token: String, update: Update) {
 		let bot_name = "@ligmir_bot";
 
-		let request = match update {
+		let skill_check_request = match update {
 			Update {
 				kind:
 					UpdateKind::Message(Message {
@@ -161,12 +157,12 @@ impl Config {
 				let skill = args.get(0).map(ToString::to_string);
 				let charsheet_url = args.get(1).map(ToString::to_string);
 
-				Request::SkillCheckRequest(SkillCheckRequest {
+				SkillCheckRequest {
 					chat,
 					message_id: id,
 					skill,
 					charsheet_url,
-				})
+				}
 			}
 			_ => {
 				println!("Ignoring update.");
@@ -174,12 +170,8 @@ impl Config {
 			}
 		};
 
-		match request {
-			Request::SkillCheckRequest(skill_check_request) => {
-				self.handle_skill_check_request(&token, skill_check_request)
-					.await
-			}
-		}
+		self.handle_skill_check_request(&token, skill_check_request)
+			.await
 	}
 }
 
