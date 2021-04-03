@@ -1,8 +1,6 @@
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
-use rocket::{
-	futures::TryFutureExt, get, http::Status, launch, post, routes, tokio, Rocket, State,
-};
+use rocket::{futures::TryFutureExt, get, launch, post, routes, tokio, Rocket, State};
 use rocket_contrib::json::Json;
 use strsim::damerau_levenshtein as edit_distance;
 use telegram_bot::{ChatId, Message, MessageChat, MessageId, MessageKind, Update, UpdateKind};
@@ -198,23 +196,6 @@ async fn telegram_update<'a>(token: String, update: Json<Update>, config: State<
 	println!("success.");
 }
 
-#[get("/telegram/setwebhook?<token>&<host>")]
-async fn telegram_setwebhook(token: String, host: String) -> Result<String, Status> {
-	let update_url = format!("https://{}/telegram/update/{}", host, token);
-	let telegram_setwebhook_request_url = format!(
-		"https://api.telegram.org/bot{}/setWebhook?url={}",
-		token, update_url
-	);
-
-	reqwest::get(&telegram_setwebhook_request_url)
-		.and_then(|response| response.text())
-		.await
-		.map_err(|err| {
-			println!("setwebhook error: {}", err);
-			Status::InternalServerError
-		})
-}
-
 #[launch]
 fn rocket() -> Rocket {
 	rocket::ignite()
@@ -225,5 +206,5 @@ fn rocket() -> Rocket {
 				.parse()
 				.expect("Cannot parse LIGMIR_BROWSER_TIMEOUT"),
 		})
-		.mount("/", routes![health, telegram_update, telegram_setwebhook])
+		.mount("/", routes![health, telegram_update])
 }
