@@ -110,14 +110,44 @@ fn download_character_sheet_sync(
 	Ok(CharacterSheet { skills })
 }
 
-async fn download_character_sheet(config: Config, url: String) -> Fallible<CharacterSheet> {
-	let skills = tokio::task::spawn_blocking(|| async {
-		download_character_sheet_sync(config.browser_url, config.browser_timeout, url)
+async fn download_character_sheet(config: &Config, url: String) -> Fallible<CharacterSheet> {
+	let Config {
+		browser_url,
+		browser_timeout,
+	} = config.clone();
+	let character_sheet = tokio::task::spawn_blocking(move || async move {
+		download_character_sheet_sync(browser_url, browser_timeout, url)
 	})
 	.await?
 	.await?;
 
-	Ok(skills)
+	Ok(character_sheet)
+}
+
+static DNDBEYOND_HOST: &'static str = "https://www.dndbeyond.com/";
+
+enum SkillCheckResponse {
+	Ok { name: String, modifier: i32 },
+	InvalidCharacterSheetUrl(String),
+	EmptySkillList,
+	DownloadError(failure::Error),
+}
+
+impl SkillCheckResponse {
+	fn message(&self) -> String {
+		use SkillCheckResponse::*;
+		match self {
+			Ok { name, modifier } => format!("{}: {}", name, modifier),
+			InvalidCharacterSheetUrl(url) => format!(
+				r#"I can't open "{}" as a charsheet link. It must start with "{}"."#,
+				url, DNDBEYOND_HOST
+			),
+			EmptySkillList => "Internal error: skill list is empty".to_string(),
+			DownloadError(err) => {
+				format!("Failed to download modifiers: {}", err)
+			}
+		}
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -127,49 +157,43 @@ struct Config {
 }
 
 impl Config {
-	async fn handle_skill_check_request(self, token: &str, request: SkillCheckRequest) {
-		let charsheet_url = match request.charsheet_url {
-			Some(some_url) => {
-				let origin = "https://www.dndbeyond.com/";
-				if !some_url.starts_with(origin) {
-					let message = format!(
-						r#"I can't open "{}" as a charsheet link. It must start with "{}"."#,
-						some_url, origin
-					);
-					telegram::send_message(token, request.chat.id(), &message, request.message_id)
-						.await;
-					return;
+	async fn handle_skill_check_request(&self, request: &SkillCheckRequest) -> SkillCheckResponse {
+		let charsheet_url = match &request.charsheet_url {
+			Some(url) => {
+				if !url.starts_with(DNDBEYOND_HOST) {
+					return SkillCheckResponse::InvalidCharacterSheetUrl(url.to_string());
 				}
-				some_url
+				url
 			}
-			None => "https://www.dndbeyond.com/characters/27570282/JhoG2D".to_string(),
+			None => "https://www.dndbeyond.com/characters/27570282/JhoG2D",
 		};
 
-		let skill_modifiers_downloading_result =
-			download_character_sheet(self, charsheet_url).await;
-
-		let message = match skill_modifiers_downloading_result {
+		match download_character_sheet(self, charsheet_url.to_string()).await {
 			Ok(character_sheet) => {
-				let entered_skill_name = request.skill.unwrap_or("Perception".to_string());
+				let entered_skill_name = request.skill.as_deref().unwrap_or("Perception");
 				let skill_with_closest_name = character_sheet
 					.skills
 					.into_iter()
-					.min_by_key(|(name, _)| edit_distance(name, &entered_skill_name));
+					.min_by_key(|(name, _)| edit_distance(name, entered_skill_name));
 				match skill_with_closest_name {
-					None => "Internal error: skill list is empty".to_string(),
-					Some((name, modifier)) => format!("{}: {}", name, modifier),
+					None => SkillCheckResponse::EmptySkillList,
+					Some((name, modifier)) => SkillCheckResponse::Ok { name, modifier },
 				}
 			}
-			Err(err) => format!("Failed to download modifiers: {}", err),
-		};
-
-		telegram::send_message(token, request.chat.id(), &message, request.message_id).await;
+			Err(err) => SkillCheckResponse::DownloadError(err),
+		}
 	}
 
-	async fn handle_update(self, token: String, update: Update) {
-		if let Some(skill_check_request) = parse_update(update, "@ligmir_bot") {
-			self.handle_skill_check_request(&token, skill_check_request)
-				.await
+	async fn handle_update(self, token: &str, update: Update) {
+		if let Some(request) = parse_update(update, "@ligmir_bot") {
+			let skill_check_response = self.handle_skill_check_request(&request).await;
+			telegram::send_message(
+				token,
+				request.chat.id(),
+				&skill_check_response.message(),
+				request.message_id,
+			)
+			.await;
 		}
 	}
 }
@@ -192,7 +216,7 @@ async fn telegram_update<'a>(token: String, update: Json<Update>, config: State<
 	print!("Spawning thread...");
 	let config = (*config).clone();
 	tokio::spawn(async move {
-		config.handle_update(token, update).await;
+		config.handle_update(&token, update).await;
 	});
 	println!("success.");
 }
