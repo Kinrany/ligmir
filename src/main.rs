@@ -51,62 +51,76 @@ struct Config {
 	browser_timeout: u64,
 }
 
+fn download_skill_modifiers_sync(
+	browser_url: String,
+	browser_timeout: u64,
+	url: String,
+) -> Fallible<Vec<(String, i32)>> {
+	let browser = Browser::connect(browser_url)?;
+
+	let tab = browser.new_tab_with_options(CreateTarget {
+		url: &url,
+		width: None,
+		height: None,
+		browser_context_id: None,
+		enable_begin_frame_control: None,
+	})?;
+
+	// Wait for network/javascript/dom to make the skill list available
+	let element = tab.wait_for_element_with_custom_timeout(
+		"div.ct-skills",
+		std::time::Duration::from_secs(browser_timeout),
+	)?;
+
+	// Parse the skill list
+	let skills = element
+		.call_js_fn(
+			r#"
+			function() {
+				const items = this.querySelectorAll(".ct-skills__item");
+				const skillValues = [...items].map(item => {
+					const skill = item.querySelector(".ct-skills__col--skill");
+					const modifier = item.querySelector(".ct-skills__col--modifier");
+					return [skill, modifier];
+				});
+				const text = skillValues
+					.map(([skill, modifier]) => `${skill.innerText},${modifier.innerText.replace("\n", "")}`)
+					.join(";");
+				return text;
+			}"#,
+			true,
+		)?
+		.value
+		.ok_or(err_msg("Function did not return a value"))?
+		.to_string()
+		.replace("\"", "")
+		.split(";")
+		.map(
+			|s| match s.split(",").take(2).collect::<Vec<&str>>().as_slice() {
+				[a, b, ..] => Ok(((*a).to_owned(), b.parse::<i32>()?)),
+				_ => {
+					let message =
+						format!("Cannot parse string \"{}\" into skill name and modifier", s);
+					Err(err_msg(message))
+				}
+			},
+		)
+		.collect::<Fallible<Vec<(String, i32)>>>()?;
+
+	Ok(skills)
+}
+
+async fn download_skill_modifiers(config: Config, url: String) -> Fallible<Vec<(String, i32)>> {
+	let skills = tokio::task::spawn_blocking(|| async {
+		download_skill_modifiers_sync(config.browser_url, config.browser_timeout, url)
+	})
+	.await?
+	.await?;
+
+	Ok(skills)
+}
+
 impl Config {
-	fn download_skill_modifiers(self, url: &str) -> Fallible<Vec<(String, i32)>> {
-		let browser = Browser::connect(self.browser_url)?;
-
-		let tab = browser.new_tab_with_options(CreateTarget {
-			url,
-			width: None,
-			height: None,
-			browser_context_id: None,
-			enable_begin_frame_control: None,
-		})?;
-
-		// Wait for network/javascript/dom to make the skill list available
-		let element = tab.wait_for_element_with_custom_timeout(
-			"div.ct-skills",
-			std::time::Duration::from_secs(self.browser_timeout),
-		)?;
-
-		// Parse the skill list
-		let skills = element
-			.call_js_fn(
-				r#"
-				function() {
-					const items = this.querySelectorAll(".ct-skills__item");
-					const skillValues = [...items].map(item => {
-						const skill = item.querySelector(".ct-skills__col--skill");
-						const modifier = item.querySelector(".ct-skills__col--modifier");
-						return [skill, modifier];
-					});
-					const text = skillValues
-						.map(([skill, modifier]) => `${skill.innerText},${modifier.innerText.replace("\n", "")}`)
-						.join(";");
-					return text;
-				}"#,
-				true,
-			)?
-			.value
-			.ok_or(err_msg("Function did not return a value"))?
-			.to_string()
-			.replace("\"", "")
-			.split(";")
-			.map(
-				|s| match s.split(",").take(2).collect::<Vec<&str>>().as_slice() {
-					[a, b, ..] => Ok(((*a).to_owned(), b.parse::<i32>()?)),
-					_ => {
-						let message =
-							format!("Cannot parse string \"{}\" into skill name and modifier", s);
-						Err(err_msg(message))
-					}
-				},
-			)
-			.collect::<Fallible<Vec<(String, i32)>>>()?;
-
-		Ok(skills)
-	}
-
 	async fn handle_skill_check_request(self, token: &str, request: SkillCheckRequest) {
 		let charsheet_url = match request.charsheet_url {
 			Some(some_url) => {
@@ -125,16 +139,11 @@ impl Config {
 			None => "https://www.dndbeyond.com/characters/27570282/JhoG2D".to_string(),
 		};
 
-		let skill_modifiers_downloading_result = tokio::task::spawn_blocking(move || {
-			println!("Beginning to download");
-			let skills = self.download_skill_modifiers(&charsheet_url);
-			println!("Finished downloading");
-			skills
-		})
-		.await;
+		let skill_modifiers_downloading_result =
+			download_skill_modifiers(self, charsheet_url).await;
 
 		let message = match skill_modifiers_downloading_result {
-			Ok(Ok(skills)) => {
+			Ok(skills) => {
 				let entered_skill_name = request.skill.unwrap_or("Perception".to_string());
 				let skill_with_closest_name = skills
 					.into_iter()
@@ -144,8 +153,7 @@ impl Config {
 					Some((name, modifier)) => format!("{}: {}", name, modifier),
 				}
 			}
-			Ok(Err(err)) => format!("Failed to download modifiers: {}", err),
-			Err(err) => format!("JoinError: {}", err),
+			Err(err) => format!("Failed to download modifiers: {}", err),
 		};
 
 		telegram::send_message(token, request.chat.id(), &message, request.message_id).await;
