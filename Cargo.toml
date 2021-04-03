@@ -23,12 +23,12 @@ features = ["rustls-tls"]
 
 [dependencies.rocket]
 git = "https://github.com/SergioBenitez/Rocket"
-rev = "407e346a6a32da548f8e31d2f684061565467d06"
+rev = "0654890e3d03a91537ee1d06b34ea3d2143f009e"
 default-features = false
 features = ["tls"]
 
 [dependencies.rocket_contrib]
 git = "https://github.com/SergioBenitez/Rocket"
-rev = "407e346a6a32da548f8e31d2f684061565467d06"
+rev = "0654890e3d03a91537ee1d06b34ea3d2143f009e"
 default-features = false
 features = ["json"]
