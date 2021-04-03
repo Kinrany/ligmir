@@ -1,9 +1,11 @@
+mod telegram;
+
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
-use rocket::{futures::TryFutureExt, get, launch, post, routes, tokio, Rocket, State};
+use rocket::{get, launch, post, routes, tokio, Rocket, State};
 use rocket_contrib::json::Json;
 use strsim::damerau_levenshtein as edit_distance;
-use telegram_bot::{ChatId, Message, MessageChat, MessageId, MessageKind, Update, UpdateKind};
+use telegram_bot::{Message, MessageChat, MessageId, MessageKind, Update, UpdateKind};
 
 struct SkillCheckRequest {
 	chat: MessageChat,
@@ -12,19 +14,34 @@ struct SkillCheckRequest {
 	charsheet_url: Option<String>,
 }
 
-async fn send_message(token: &str, chat_id: ChatId, message: &str, reply_to: MessageId) {
-	let result = reqwest::get(&format!(
-		"https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}&reply_to_message_id={}",
-		token, chat_id, message, reply_to
-	))
-	.and_then(|response| response.text())
-	.await;
+fn parse_update(update: Update, bot_name: &str) -> Option<SkillCheckRequest> {
+	match update {
+		Update {
+			kind:
+				UpdateKind::Message(Message {
+					chat,
+					id,
+					kind: MessageKind::Text { data: text, .. },
+					..
+				}),
+			..
+		} => {
+			let args = text
+				.split_whitespace()
+				.filter(|&s| s != bot_name)
+				.take(2)
+				.collect::<Vec<_>>();
+			let skill = args.get(0).map(ToString::to_string);
+			let charsheet_url = args.get(1).map(ToString::to_string);
 
-	if let Err(err) = result {
-		println!(
-			r#"Failed to send message "{}" to user {} in chat {}: {}"#,
-			message, reply_to, chat_id, err
-		);
+			Some(SkillCheckRequest {
+				chat,
+				message_id: id,
+				skill,
+				charsheet_url,
+			})
+		}
+		_ => None,
 	}
 }
 
@@ -99,7 +116,8 @@ impl Config {
 						r#"I can't open "{}" as a charsheet link. It must start with "{}"."#,
 						some_url, origin
 					);
-					send_message(token, request.chat.id(), &message, request.message_id).await;
+					telegram::send_message(token, request.chat.id(), &message, request.message_id)
+						.await;
 					return;
 				}
 				some_url
@@ -130,46 +148,14 @@ impl Config {
 			Err(err) => format!("JoinError: {}", err),
 		};
 
-		send_message(token, request.chat.id(), &message, request.message_id).await;
+		telegram::send_message(token, request.chat.id(), &message, request.message_id).await;
 	}
 
 	async fn handle_update(self, token: String, update: Update) {
-		let bot_name = "@ligmir_bot";
-
-		let skill_check_request = match update {
-			Update {
-				kind:
-					UpdateKind::Message(Message {
-						chat,
-						id,
-						kind: MessageKind::Text { data: text, .. },
-						..
-					}),
-				..
-			} => {
-				let args = text
-					.split_whitespace()
-					.filter(|&s| s != bot_name)
-					.take(2)
-					.collect::<Vec<_>>();
-				let skill = args.get(0).map(ToString::to_string);
-				let charsheet_url = args.get(1).map(ToString::to_string);
-
-				SkillCheckRequest {
-					chat,
-					message_id: id,
-					skill,
-					charsheet_url,
-				}
-			}
-			_ => {
-				println!("Ignoring update.");
-				return;
-			}
-		};
-
-		self.handle_skill_check_request(&token, skill_check_request)
-			.await
+		if let Some(skill_check_request) = parse_update(update, "@ligmir_bot") {
+			self.handle_skill_check_request(&token, skill_check_request)
+				.await
+		}
 	}
 }
 
