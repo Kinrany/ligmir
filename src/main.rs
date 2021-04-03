@@ -1,5 +1,7 @@
 mod telegram;
 
+use std::collections::HashMap;
+
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
 use rocket::{get, launch, post, routes, tokio, Rocket, State};
@@ -45,17 +47,15 @@ fn parse_update(update: Update, bot_name: &str) -> Option<SkillCheckRequest> {
 	}
 }
 
-#[derive(Clone, Debug)]
-struct Config {
-	browser_url: String,
-	browser_timeout: u64,
+struct CharacterSheet {
+	skills: HashMap<String, i32>,
 }
 
-fn download_skill_modifiers_sync(
+fn download_character_sheet_sync(
 	browser_url: String,
 	browser_timeout: u64,
 	url: String,
-) -> Fallible<Vec<(String, i32)>> {
+) -> Fallible<CharacterSheet> {
 	let browser = Browser::connect(browser_url)?;
 
 	let tab = browser.new_tab_with_options(CreateTarget {
@@ -105,19 +105,25 @@ fn download_skill_modifiers_sync(
 				}
 			},
 		)
-		.collect::<Fallible<Vec<(String, i32)>>>()?;
+		.collect::<Fallible<HashMap<String, i32>>>()?;
 
-	Ok(skills)
+	Ok(CharacterSheet { skills })
 }
 
-async fn download_skill_modifiers(config: Config, url: String) -> Fallible<Vec<(String, i32)>> {
+async fn download_character_sheet(config: Config, url: String) -> Fallible<CharacterSheet> {
 	let skills = tokio::task::spawn_blocking(|| async {
-		download_skill_modifiers_sync(config.browser_url, config.browser_timeout, url)
+		download_character_sheet_sync(config.browser_url, config.browser_timeout, url)
 	})
 	.await?
 	.await?;
 
 	Ok(skills)
+}
+
+#[derive(Clone, Debug)]
+struct Config {
+	browser_url: String,
+	browser_timeout: u64,
 }
 
 impl Config {
@@ -140,12 +146,13 @@ impl Config {
 		};
 
 		let skill_modifiers_downloading_result =
-			download_skill_modifiers(self, charsheet_url).await;
+			download_character_sheet(self, charsheet_url).await;
 
 		let message = match skill_modifiers_downloading_result {
-			Ok(skills) => {
+			Ok(character_sheet) => {
 				let entered_skill_name = request.skill.unwrap_or("Perception".to_string());
-				let skill_with_closest_name = skills
+				let skill_with_closest_name = character_sheet
+					.skills
 					.into_iter()
 					.min_by_key(|(name, _)| edit_distance(name, &entered_skill_name));
 				match skill_with_closest_name {
