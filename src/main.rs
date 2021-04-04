@@ -1,6 +1,8 @@
 mod character_sheet;
 mod telegram;
 
+use std::{error::Error, fmt::Display};
+
 use character_sheet::Headless;
 use rocket::{get, launch, post, routes, tokio, Rocket, State};
 use rocket_contrib::json::Json;
@@ -47,74 +49,80 @@ fn parse_update(update: Update, bot_name: &str) -> Option<SkillCheckRequest> {
 
 static DNDBEYOND_HOST: &'static str = "https://www.dndbeyond.com/";
 
-enum SkillCheckResponse {
-	Ok { name: String, modifier: i32 },
+#[derive(Debug)]
+enum SkillCheckError {
 	InvalidCharacterSheetUrl(String),
 	EmptySkillList,
 	DownloadError(failure::Error),
 }
 
-impl SkillCheckResponse {
-	fn message(&self) -> String {
-		use SkillCheckResponse::*;
+impl Display for SkillCheckError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		use SkillCheckError::*;
 		match self {
-			Ok { name, modifier } => format!("{}: {}", name, modifier),
-			InvalidCharacterSheetUrl(url) => format!(
+			InvalidCharacterSheetUrl(url) => write!(
+				f,
 				r#"I can't open "{}" as a charsheet link. It must start with "{}"."#,
 				url, DNDBEYOND_HOST
 			),
-			EmptySkillList => "Internal error: skill list is empty".to_string(),
+			EmptySkillList => write!(f, "Internal error: skill list is empty"),
 			DownloadError(err) => {
-				format!("Failed to download modifiers: {}", err)
+				write!(f, "Failed to download modifiers: {}", err)
 			}
 		}
 	}
 }
 
+impl Error for SkillCheckError {}
+
+struct SkillCheckResponse {
+	name: String,
+	modifier: i32,
+}
+
+impl Display for SkillCheckResponse {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let SkillCheckResponse { name, modifier } = self;
+		write!(f, "{}: {}", name, modifier)
+	}
+}
+
+static DEFAULT_CHARSHEET_URL: &'static str = "https://www.dndbeyond.com/characters/27570282/JhoG2D";
+
 async fn handle_skill_check_request(
 	headless: &Headless,
 	request: &SkillCheckRequest,
-) -> SkillCheckResponse {
-	let charsheet_url = match &request.charsheet_url {
-		Some(url) => {
-			if !url.starts_with(DNDBEYOND_HOST) {
-				return SkillCheckResponse::InvalidCharacterSheetUrl(url.to_string());
-			}
-			url
-		}
-		None => "https://www.dndbeyond.com/characters/27570282/JhoG2D",
-	};
+) -> Result<SkillCheckResponse, SkillCheckError> {
+	let charsheet_url = match request.charsheet_url {
+		Some(ref url) if url.starts_with(DNDBEYOND_HOST) => Ok(url.as_str()),
+		Some(ref url) => Err(SkillCheckError::InvalidCharacterSheetUrl(url.to_string())),
+		None => Ok(DEFAULT_CHARSHEET_URL),
+	}?;
 
-	let character_sheet_result = headless
+	let character_sheet = headless
 		.download_character_sheet(charsheet_url.to_string())
-		.await;
+		.await
+		.map_err(|err| SkillCheckError::DownloadError(err))?;
 
-	match character_sheet_result {
-		Ok(character_sheet) => {
-			let entered_skill_name = request.skill.as_deref().unwrap_or("Perception");
-			let skill_with_closest_name = character_sheet
-				.skills
-				.into_iter()
-				.min_by_key(|(name, _)| edit_distance(name, entered_skill_name));
-			match skill_with_closest_name {
-				None => SkillCheckResponse::EmptySkillList,
-				Some((name, modifier)) => SkillCheckResponse::Ok { name, modifier },
-			}
-		}
-		Err(err) => SkillCheckResponse::DownloadError(err),
-	}
+	let entered_skill_name = request.skill.as_deref().unwrap_or("Perception");
+
+	let (name, modifier) = character_sheet
+		.skills
+		.into_iter()
+		.min_by_key(|(name, _)| edit_distance(name, entered_skill_name))
+		.ok_or(SkillCheckError::EmptySkillList)?;
+
+	Ok(SkillCheckResponse { name, modifier })
 }
 
 async fn handle_update(headless: &Headless, token: &str, update: Update) {
 	if let Some(request) = parse_update(update, "@ligmir_bot") {
 		let skill_check_response = handle_skill_check_request(headless, &request).await;
-		telegram::send_message(
-			token,
-			request.chat.id(),
-			&skill_check_response.message(),
-			request.message_id,
-		)
-		.await;
+		let message = match skill_check_response {
+			Ok(ok) => ok.to_string(),
+			Err(err) => err.to_string(),
+		};
+		telegram::send_message(token, request.chat.id(), &message, request.message_id).await;
 	}
 }
 
