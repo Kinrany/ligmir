@@ -918,6 +918,7 @@ version = "0.1.0"
 dependencies = [
  "failure",
  "headless_chrome",
+ "rand 0.8.3",
  "reqwest",
  "rocket",
  "rocket_contrib",

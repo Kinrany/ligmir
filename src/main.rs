@@ -4,6 +4,7 @@ mod telegram;
 use std::{error::Error, fmt::Display};
 
 use character_sheet::Headless;
+use rand::Rng;
 use rocket::{get, launch, post, routes, tokio, Rocket, State};
 use rocket_contrib::json::Json;
 use strsim::damerau_levenshtein as edit_distance;
@@ -56,6 +57,7 @@ enum SkillCheckError {
 	DownloadError(failure::Error),
 }
 
+/// Used in error messages shown to the user.
 impl Display for SkillCheckError {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		use SkillCheckError::*;
@@ -76,14 +78,26 @@ impl Display for SkillCheckError {
 impl Error for SkillCheckError {}
 
 struct SkillCheckResponse {
-	name: String,
+	skill: String,
 	modifier: i32,
+	d20: i32,
 }
 
 impl Display for SkillCheckResponse {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		let SkillCheckResponse { name, modifier } = self;
-		write!(f, "{}: {}", name, modifier)
+		let SkillCheckResponse {
+			skill,
+			modifier,
+			d20,
+		} = self;
+		write!(
+			f,
+			"{} check: 🎲{} + {} = {}",
+			skill,
+			d20,
+			modifier,
+			d20 + modifier
+		)
 	}
 }
 
@@ -106,13 +120,19 @@ async fn handle_skill_check_request(
 
 	let entered_skill_name = request.skill.as_deref().unwrap_or("Perception");
 
-	let (name, modifier) = character_sheet
+	let (skill, modifier) = character_sheet
 		.skills
 		.into_iter()
 		.min_by_key(|(name, _)| edit_distance(name, entered_skill_name))
 		.ok_or(SkillCheckError::EmptySkillList)?;
 
-	Ok(SkillCheckResponse { name, modifier })
+	let d20 = rand::thread_rng().gen_range(1..21);
+
+	Ok(SkillCheckResponse {
+		skill,
+		modifier,
+		d20,
+	})
 }
 
 async fn handle_update(headless: &Headless, token: &str, update: Update) {
