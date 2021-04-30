@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use anyhow::anyhow;
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
 use rocket::tokio;
@@ -71,13 +72,17 @@ impl Headless {
 		Ok(CharacterSheet { skills })
 	}
 
-	pub async fn download_character_sheet(self: &Headless, url: Url) -> Fallible<CharacterSheet> {
+	pub async fn download_character_sheet(
+		self: &Headless,
+		url: Url,
+	) -> anyhow::Result<CharacterSheet> {
 		let headless = self.clone();
-		let character_sheet = tokio::task::spawn_blocking(move || async move {
+		let character_sheet: CharacterSheet = tokio::task::spawn_blocking(move || async move {
 			headless.download_character_sheet_sync(url)
 		})
 		.await?
-		.await?;
+		.await
+		.map_err(|_| anyhow!("Failed to download character sheet."))?;
 
 		Ok(character_sheet)
 	}

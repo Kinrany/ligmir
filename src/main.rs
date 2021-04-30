@@ -3,11 +3,11 @@ mod telegram;
 
 use std::{convert::TryFrom, env, fmt::Display};
 
+use anyhow::anyhow;
 use character_sheet::Headless;
-use failure::err_msg;
 use lazy_static::lazy_static;
 use rand::Rng;
-use redis::{AsyncCommands, Client as Redis, ToRedisArgs};
+use redis::{AsyncCommands, Client as Redis, FromRedisValue, ToRedisArgs};
 use regex::Regex;
 use rocket::{get, launch, post, routes, tokio, Rocket, State};
 use rocket_contrib::json::Json;
@@ -119,11 +119,11 @@ impl Display for SkillCheckResponse {
 	}
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct CharacterId(i64);
 
 impl TryFrom<&str> for CharacterId {
-	type Error = failure::Error;
+	type Error = anyhow::Error;
 
 	fn try_from(url: &str) -> Result<Self, Self::Error> {
 		lazy_static! {
@@ -143,7 +143,7 @@ impl TryFrom<&str> for CharacterId {
 			}
 		}
 
-		Err(err_msg("Expected a character sheet URL."))
+		Err(anyhow!("Expected a character sheet URL."))
 	}
 }
 
@@ -156,10 +156,24 @@ impl ToRedisArgs for CharacterId {
 	}
 }
 
-static DEFAULT_CHARACTER_ID: i64 = 27570282;
+impl FromRedisValue for CharacterId {
+	fn from_redis_value(v: &redis::Value) -> redis::RedisResult<Self> {
+		i64::from_redis_value(v).map(CharacterId)
+	}
+}
+
+impl Display for CharacterId {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+		self.0.fmt(f)
+	}
+}
+
+/// Sample character: https://www.dndbeyond.com/characters/36535842
+const DEFAULT_CHARACTER_ID: CharacterId = CharacterId(36535842);
+
 static REDIS_KEY_TELEGRAM_USER_CHARSHEET_URL: &str = "TELEGRAM_USER_CHARSHEET_URL";
 
-fn character_sheet_url(character_id: i64) -> Url {
+fn character_sheet_url(character_id: CharacterId) -> Url {
 	let base = Url::parse("https://www.dndbeyond.com/characters/").unwrap();
 	base.join(&character_id.to_string()).unwrap()
 }
@@ -167,10 +181,10 @@ fn character_sheet_url(character_id: i64) -> Url {
 async fn handle_skill_check_request(
 	context: &Context,
 	request: &SkillCheckRequest,
-) -> Result<SkillCheckResponse, failure::Error> {
+) -> Result<SkillCheckResponse, anyhow::Error> {
 	let mut redis_conn = context.redis.get_async_connection().await?;
 
-	let saved_character_id: Option<i64> = redis_conn
+	let saved_character_id: Option<CharacterId> = redis_conn
 		.get((
 			REDIS_KEY_TELEGRAM_USER_CHARSHEET_URL,
 			&request.source.user_id.to_string(),
@@ -183,13 +197,13 @@ async fn handle_skill_check_request(
 		.headless
 		.download_character_sheet(character_sheet_url(character_id))
 		.await
-		.map_err(|_| err_msg("Failed to download modifiers"))?;
+		.map_err(|_| anyhow!("Failed to download modifiers"))?;
 
 	let (skill, modifier) = character_sheet
 		.skills
 		.into_iter()
 		.min_by_key(|(name, _)| edit_distance(name, &request.skill))
-		.ok_or_else(|| err_msg("Internal error: skill list is empty"))?;
+		.ok_or_else(|| anyhow!("Internal error: skill list is empty"))?;
 
 	let d20 = rand::thread_rng().gen_range(1..21);
 
@@ -211,7 +225,7 @@ impl Display for SetCharacterResponse {
 async fn handle_set_character_request(
 	context: &Context,
 	request: &SetCharacterRequest,
-) -> Result<SetCharacterResponse, failure::Error> {
+) -> Result<SetCharacterResponse, anyhow::Error> {
 	let mut redis_conn = context.redis.get_async_connection().await?;
 
 	let key = (
@@ -223,7 +237,7 @@ async fn handle_set_character_request(
 	Ok(SetCharacterResponse)
 }
 
-fn response_to_string<T>(response: Result<T, failure::Error>) -> String
+fn response_to_string<T>(response: Result<T, anyhow::Error>) -> String
 where
 	T: Display,
 {
@@ -303,8 +317,12 @@ fn rocket() -> Rocket {
 
 #[cfg(test)]
 mod tests {
+	use super::CharacterId;
+	use std::convert::TryFrom;
+
 	#[test]
 	fn parse_character_id_from_str() {
-		let url = "https://www.dndbeyond.com/profile/Kinrany/characters/31859887";
+		let url = "https://www.dndbeyond.com/characters/36535842/";
+		assert_eq!(CharacterId::try_from(url).unwrap(), CharacterId(36535842));
 	}
 }
