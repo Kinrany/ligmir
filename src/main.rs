@@ -171,7 +171,9 @@ impl Display for CharacterId {
 /// Sample character: https://www.dndbeyond.com/characters/36535842
 const DEFAULT_CHARACTER_ID: CharacterId = CharacterId(36535842);
 
-static REDIS_KEY_TELEGRAM_USER_CHARSHEET_URL: &str = "TELEGRAM_USER_CHARSHEET_URL";
+fn telegram_user_charsheet_url(user_id: UserId) -> String {
+	format!("TELEGRAM_USER_CHARSHEET_URL {}", user_id)
+}
 
 fn character_sheet_url(character_id: CharacterId) -> Url {
 	let base = Url::parse("https://www.dndbeyond.com/characters/").unwrap();
@@ -184,10 +186,7 @@ async fn handle_skill_check_request(
 ) -> Result<SkillCheckResponse, anyhow::Error> {
 	let mut redis_conn = context.redis.get_async_connection().await?;
 
-	let key = (
-		REDIS_KEY_TELEGRAM_USER_CHARSHEET_URL,
-		&request.source.user_id.to_string(),
-	);
+	let key = telegram_user_charsheet_url(request.source.user_id);
 	let character_id: Option<CharacterId> = redis_conn.get(key).await?;
 	let character_id = character_id.unwrap_or(DEFAULT_CHARACTER_ID);
 
@@ -226,10 +225,7 @@ async fn handle_set_character_request(
 ) -> Result<SetCharacterResponse, anyhow::Error> {
 	let mut redis_conn = context.redis.get_async_connection().await?;
 
-	let key = (
-		REDIS_KEY_TELEGRAM_USER_CHARSHEET_URL,
-		&request.source.user_id.to_string(),
-	);
+	let key = telegram_user_charsheet_url(request.source.user_id);
 	redis_conn.set(key, request.character_id).await?;
 
 	Ok(SetCharacterResponse)
