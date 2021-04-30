@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use failure::{err_msg, Fallible};
 use headless_chrome::{protocol::target::methods::CreateTarget, Browser};
 use rocket::tokio;
+use url::Url;
 
 pub struct CharacterSheet {
 	pub skills: HashMap<String, i32>,
@@ -15,11 +16,11 @@ pub struct Headless {
 }
 
 impl Headless {
-	fn download_character_sheet_sync(self: Headless, url: String) -> Fallible<CharacterSheet> {
+	fn download_character_sheet_sync(self: Headless, url: Url) -> Fallible<CharacterSheet> {
 		let browser = Browser::connect(self.service_url)?;
 
 		let tab = browser.new_tab_with_options(CreateTarget {
-			url: &url,
+			url: url.as_str(),
 			width: None,
 			height: None,
 			browser_context_id: None,
@@ -51,12 +52,12 @@ impl Headless {
 				true,
 			)?
 			.value
-			.ok_or(err_msg("Function did not return a value"))?
+			.ok_or_else(|| err_msg("Function did not return a value"))?
 			.to_string()
 			.replace("\"", "")
-			.split(";")
+			.split(';')
 			.map(
-				|s| match s.split(",").take(2).collect::<Vec<&str>>().as_slice() {
+				|s| match s.split(',').take(2).collect::<Vec<&str>>().as_slice() {
 					[a, b, ..] => Ok(((*a).to_owned(), b.parse::<i32>()?)),
 					_ => {
 						let message =
@@ -70,10 +71,7 @@ impl Headless {
 		Ok(CharacterSheet { skills })
 	}
 
-	pub async fn download_character_sheet(
-		self: &Headless,
-		url: String,
-	) -> Fallible<CharacterSheet> {
+	pub async fn download_character_sheet(self: &Headless, url: Url) -> Fallible<CharacterSheet> {
 		let headless = self.clone();
 		let character_sheet = tokio::task::spawn_blocking(move || async move {
 			headless.download_character_sheet_sync(url)

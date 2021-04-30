@@ -1,81 +1,99 @@
 mod character_sheet;
 mod telegram;
 
-use std::{error::Error, fmt::Display};
+use std::{convert::TryFrom, env, fmt::Display};
 
 use character_sheet::Headless;
+use failure::err_msg;
+use lazy_static::lazy_static;
 use rand::Rng;
+use redis::{AsyncCommands, Client as Redis, ToRedisArgs};
+use regex::Regex;
 use rocket::{get, launch, post, routes, tokio, Rocket, State};
 use rocket_contrib::json::Json;
 use strsim::damerau_levenshtein as edit_distance;
-use telegram_bot::{Message, MessageChat, MessageId, MessageKind, Update, UpdateKind};
+use telegram_bot::{ChatId, Message, MessageId, MessageKind, Update, UpdateKind, User, UserId};
+use url::Url;
+
+struct RequestSource {
+	chat_id: ChatId,
+	message_id: MessageId,
+	user_id: UserId,
+}
+
+impl RequestSource {
+	async fn respond(&self, token: &str, message: &str) {
+		telegram::send_message(token, self.chat_id, message, self.message_id).await;
+	}
+}
 
 struct SkillCheckRequest {
-	chat: MessageChat,
-	message_id: MessageId,
-	skill: Option<String>,
-	charsheet_url: Option<String>,
+	source: RequestSource,
+	skill: String,
 }
 
-fn parse_update(update: Update, bot_name: &str) -> Option<SkillCheckRequest> {
-	match update {
-		Update {
-			kind:
-				UpdateKind::Message(Message {
-					chat,
-					id,
-					kind: MessageKind::Text { data: text, .. },
-					..
-				}),
-			..
-		} => {
-			let args = text
-				.split_whitespace()
-				.filter(|&s| s != bot_name)
-				.take(2)
-				.collect::<Vec<_>>();
-			let skill = args.get(0).map(ToString::to_string);
-			let charsheet_url = args.get(1).map(ToString::to_string);
-
-			Some(SkillCheckRequest {
-				chat,
-				message_id: id,
-				skill,
-				charsheet_url,
-			})
-		}
-		_ => None,
-	}
+struct SetCharacterRequest {
+	source: RequestSource,
+	character_id: CharacterId,
 }
 
-static DNDBEYOND_HOST: &'static str = "https://www.dndbeyond.com/";
-
-#[derive(Debug)]
-enum SkillCheckError {
-	InvalidCharacterSheetUrl(String),
-	EmptySkillList,
-	DownloadError(failure::Error),
+enum BotCommand {
+	SkillCheck(SkillCheckRequest),
+	SetCharacter(SetCharacterRequest),
+	Unknown,
+	Error {
+		source: RequestSource,
+		error: String,
+	},
 }
 
-/// Used in error messages shown to the user.
-impl Display for SkillCheckError {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		use SkillCheckError::*;
-		match self {
-			InvalidCharacterSheetUrl(url) => write!(
-				f,
-				r#"I can't open "{}" as a charsheet link. It must start with "{}"."#,
-				url, DNDBEYOND_HOST
-			),
-			EmptySkillList => write!(f, "Internal error: skill list is empty"),
-			DownloadError(err) => {
-				write!(f, "Failed to download modifiers: {}", err)
+impl From<Update> for BotCommand {
+	fn from(update: Update) -> Self {
+		match update {
+			Update {
+				kind:
+					UpdateKind::Message(Message {
+						chat,
+						id: message_id,
+						from: User { id: user_id, .. },
+						kind: MessageKind::Text { data, .. },
+						..
+					}),
+				..
+			} => {
+				let source = RequestSource {
+					chat_id: chat.id(),
+					message_id,
+					user_id,
+				};
+				if data.starts_with("/skill") {
+					BotCommand::SkillCheck(SkillCheckRequest {
+						source,
+						// skip the first 7 characters matching "/skill "
+						skill: data[7..data.len()].to_string(),
+					})
+				} else if data.starts_with("/character") {
+					let character_id = match CharacterId::try_from(&data[11..data.len()]) {
+						Ok(character_id) => character_id,
+						Err(err) => {
+							return BotCommand::Error {
+								source,
+								error: err.to_string(),
+							}
+						}
+					};
+					BotCommand::SetCharacter(SetCharacterRequest {
+						source,
+						character_id,
+					})
+				} else {
+					BotCommand::Unknown
+				}
 			}
+			_ => BotCommand::Unknown,
 		}
 	}
 }
-
-impl Error for SkillCheckError {}
 
 struct SkillCheckResponse {
 	skill: String,
@@ -101,30 +119,75 @@ impl Display for SkillCheckResponse {
 	}
 }
 
-static DEFAULT_CHARSHEET_URL: &'static str = "https://www.dndbeyond.com/characters/27570282/JhoG2D";
+#[derive(Copy, Clone, Debug)]
+struct CharacterId(i64);
+
+impl TryFrom<&str> for CharacterId {
+	type Error = failure::Error;
+
+	fn try_from(url: &str) -> Result<Self, Self::Error> {
+		lazy_static! {
+			// List of regexes that capture character ID in a group named "id"
+			static ref PATTERNS: Vec<Regex> =
+				vec![Regex::new(r"^https://www.dndbeyond.com/characters/(?P<id>d+)").unwrap()];
+		}
+
+		for pattern in PATTERNS.iter() {
+			if let Some(captures) = pattern.captures(url) {
+				if let Some(id_match) = captures.name("id") {
+					let character_id = id_match.as_str().parse()?;
+					return Ok(CharacterId(character_id));
+				}
+			}
+		}
+
+		Err(err_msg("Expected a character sheet URL."))
+	}
+}
+
+impl ToRedisArgs for CharacterId {
+	fn write_redis_args<W>(&self, out: &mut W)
+	where
+		W: ?Sized + redis::RedisWrite,
+	{
+		self.0.write_redis_args(out)
+	}
+}
+
+static DEFAULT_CHARACTER_ID: i64 = 27570282;
+static REDIS_KEY_TELEGRAM_USER_CHARSHEET_URL: &str = "TELEGRAM_USER_CHARSHEET_URL";
+
+fn character_sheet_url(character_id: i64) -> Url {
+	let base = Url::parse("https://www.dndbeyond.com/characters/").unwrap();
+	base.join(&character_id.to_string()).unwrap()
+}
 
 async fn handle_skill_check_request(
-	headless: &Headless,
+	context: &Context,
 	request: &SkillCheckRequest,
-) -> Result<SkillCheckResponse, SkillCheckError> {
-	let charsheet_url = match request.charsheet_url {
-		Some(ref url) if url.starts_with(DNDBEYOND_HOST) => Ok(url.as_str()),
-		Some(ref url) => Err(SkillCheckError::InvalidCharacterSheetUrl(url.to_string())),
-		None => Ok(DEFAULT_CHARSHEET_URL),
-	}?;
+) -> Result<SkillCheckResponse, failure::Error> {
+	let mut redis_conn = context.redis.get_async_connection().await?;
 
-	let character_sheet = headless
-		.download_character_sheet(charsheet_url.to_string())
+	let saved_character_id: Option<i64> = redis_conn
+		.get((
+			REDIS_KEY_TELEGRAM_USER_CHARSHEET_URL,
+			&request.source.user_id.to_string(),
+		))
+		.await?;
+
+	let character_id = saved_character_id.unwrap_or(DEFAULT_CHARACTER_ID);
+
+	let character_sheet = context
+		.headless
+		.download_character_sheet(character_sheet_url(character_id))
 		.await
-		.map_err(|err| SkillCheckError::DownloadError(err))?;
-
-	let entered_skill_name = request.skill.as_deref().unwrap_or("Perception");
+		.map_err(|_| err_msg("Failed to download modifiers"))?;
 
 	let (skill, modifier) = character_sheet
 		.skills
 		.into_iter()
-		.min_by_key(|(name, _)| edit_distance(name, entered_skill_name))
-		.ok_or(SkillCheckError::EmptySkillList)?;
+		.min_by_key(|(name, _)| edit_distance(name, &request.skill))
+		.ok_or_else(|| err_msg("Internal error: skill list is empty"))?;
 
 	let d20 = rand::thread_rng().gen_range(1..21);
 
@@ -135,14 +198,58 @@ async fn handle_skill_check_request(
 	})
 }
 
-async fn handle_update(headless: &Headless, token: &str, update: Update) {
-	if let Some(request) = parse_update(update, "@ligmir_bot") {
-		let skill_check_response = handle_skill_check_request(headless, &request).await;
-		let message = match skill_check_response {
-			Ok(ok) => ok.to_string(),
-			Err(err) => err.to_string(),
-		};
-		telegram::send_message(token, request.chat.id(), &message, request.message_id).await;
+struct SetCharacterResponse;
+
+impl Display for SetCharacterResponse {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "Will do!")
+	}
+}
+
+async fn handle_set_character_request(
+	context: &Context,
+	request: &SetCharacterRequest,
+) -> Result<SetCharacterResponse, failure::Error> {
+	let mut redis_conn = context.redis.get_async_connection().await?;
+
+	let key = (
+		REDIS_KEY_TELEGRAM_USER_CHARSHEET_URL,
+		&request.source.user_id.to_string(),
+	);
+	redis_conn.set(key, request.character_id).await?;
+
+	Ok(SetCharacterResponse)
+}
+
+fn response_to_string<T>(response: Result<T, failure::Error>) -> String
+where
+	T: Display,
+{
+	match response {
+		Ok(ok) => ok.to_string(),
+		Err(err) => {
+			println!("Internal error: {}", err);
+			"Sorry, boss, I can't do that.".to_string()
+		}
+	}
+}
+
+async fn handle_update(context: &Context, token: &str, update: Update) {
+	let response = match update.into() {
+		BotCommand::SkillCheck(request) => {
+			let response = handle_skill_check_request(context, &request).await;
+			Some((request.source, response_to_string(response)))
+		}
+		BotCommand::SetCharacter(request) => {
+			let response = handle_set_character_request(context, &request).await;
+			Some((request.source, response_to_string(response)))
+		}
+		BotCommand::Unknown => None,
+		BotCommand::Error { source, error } => Some((source, error)),
+	};
+
+	if let Some((source, message)) = response {
+		source.respond(token, &message).await;
 	}
 }
 
@@ -156,28 +263,38 @@ fn health() -> &'static str {
 	format = "application/json",
 	data = "<update>"
 )]
-async fn telegram_update<'a>(token: String, update: Json<Update>, headless: State<'a, Headless>) {
+async fn telegram_update<'a>(token: String, update: Json<Update>, context: State<'_, Context>) {
 	let update = update.0;
 
 	println!("Received update: {:?}", update);
 
 	print!("Spawning thread...");
-	let headless = (*headless).clone();
+	let context = (*context).clone();
 	tokio::spawn(async move {
-		handle_update(&headless, &token, update).await;
+		handle_update(&context, &token, update).await;
 	});
 	println!("success.");
+}
+
+#[derive(Clone, Debug)]
+struct Context {
+	redis: Redis,
+	headless: Headless,
 }
 
 #[launch]
 fn rocket() -> Rocket {
 	rocket::ignite()
-		.manage(Headless {
-			service_url: std::env::var("LIGMIR_BROWSER_URL").expect("Expected LIGMIR_BROWSER_URL"),
-			timeout: std::env::var("LIGMIR_BROWSER_TIMEOUT")
-				.expect("Expected LIGMIR_BROWSER_TIMEOUT")
-				.parse()
-				.expect("Cannot parse LIGMIR_BROWSER_TIMEOUT"),
+		.manage(Context {
+			redis: Redis::open(env::var("LIGMIR_REDIS_URL").expect("Expected LIGMIR_REDIS_URL"))
+				.expect("Failed to initialize Redis client"),
+			headless: Headless {
+				service_url: env::var("LIGMIR_BROWSER_URL").expect("Expected LIGMIR_BROWSER_URL"),
+				timeout: env::var("LIGMIR_BROWSER_TIMEOUT")
+					.expect("Expected LIGMIR_BROWSER_TIMEOUT")
+					.parse()
+					.expect("Cannot parse LIGMIR_BROWSER_TIMEOUT"),
+			},
 		})
 		.mount("/", routes![health, telegram_update])
 }
