@@ -101,21 +101,21 @@ struct SkillCheckResponse {
 	d20: i32,
 }
 
+impl SkillCheckResponse {
+	fn format(&self) -> String {
+		format!(
+			"{} check: {}💪+{}🎲 = {}",
+			self.skill,
+			self.modifier,
+			self.d20,
+			self.d20 + self.modifier
+		)
+	}
+}
+
 impl Display for SkillCheckResponse {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		let SkillCheckResponse {
-			skill,
-			modifier,
-			d20,
-		} = self;
-		write!(
-			f,
-			"{} check: 🎲{} + {} = {}",
-			skill,
-			d20,
-			modifier,
-			d20 + modifier
-		)
+		f.write_str(&self.format())
 	}
 }
 
@@ -311,12 +311,32 @@ fn rocket() -> Rocket {
 
 #[cfg(test)]
 mod tests {
-	use super::CharacterId;
+	use super::{CharacterId, SkillCheckResponse};
 	use std::convert::TryFrom;
 
 	#[test]
 	fn parse_character_id_from_str() {
 		let url = "https://www.dndbeyond.com/characters/36535842/";
 		assert_eq!(CharacterId::try_from(url).unwrap(), CharacterId(36535842));
+	}
+
+	#[test]
+	fn print_skill_check() {
+		let skill_check = SkillCheckResponse {
+			skill: "Arcana".to_string(),
+			modifier: 3,
+			d20: 12,
+		};
+		assert_eq!(skill_check.format(), "Arcana check: 3💪+12🎲 = 15");
+	}
+
+	#[test]
+	fn print_skill_check_negative() {
+		let skill_check = SkillCheckResponse {
+			skill: "Arcana".to_string(),
+			modifier: -2,
+			d20: 12,
+		};
+		assert_eq!(skill_check.format(), "Arcana check: -2💪+12🎲 = 10");
 	}
 }
