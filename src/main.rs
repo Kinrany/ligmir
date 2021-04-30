@@ -184,14 +184,12 @@ async fn handle_skill_check_request(
 ) -> Result<SkillCheckResponse, anyhow::Error> {
 	let mut redis_conn = context.redis.get_async_connection().await?;
 
-	let saved_character_id: Option<CharacterId> = redis_conn
-		.get((
-			REDIS_KEY_TELEGRAM_USER_CHARSHEET_URL,
-			&request.source.user_id.to_string(),
-		))
-		.await?;
-
-	let character_id = saved_character_id.unwrap_or(DEFAULT_CHARACTER_ID);
+	let key = (
+		REDIS_KEY_TELEGRAM_USER_CHARSHEET_URL,
+		&request.source.user_id.to_string(),
+	);
+	let character_id: Option<CharacterId> = redis_conn.get(key).await?;
+	let character_id = character_id.unwrap_or(DEFAULT_CHARACTER_ID);
 
 	let character_sheet = context
 		.headless
