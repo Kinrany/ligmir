@@ -953,6 +953,8 @@ dependencies = [
  "reqwest",
  "rocket",
  "rocket_contrib",
+ "serde",
+ "serde_urlencoded",
  "strsim 0.10.0",
  "telegram-bot",
  "url 2.2.1",
