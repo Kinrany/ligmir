@@ -129,7 +129,9 @@ impl TryFrom<&str> for CharacterId {
 		lazy_static! {
 			// List of regexes that capture character ID in a group named "id"
 			static ref PATTERNS: Vec<Regex> =
-				vec![Regex::new(r"^https://www.dndbeyond.com/characters/(?P<id>d+)").unwrap()];
+				vec![
+					Regex::new(r"^https://www.dndbeyond.com/(?:profile/[[:alnum:]]+/)?characters/(?P<id>\d+)").unwrap(),
+				];
 		}
 
 		for pattern in PATTERNS.iter() {
@@ -297,4 +299,12 @@ fn rocket() -> Rocket {
 			},
 		})
 		.mount("/", routes![health, telegram_update])
+}
+
+#[cfg(test)]
+mod tests {
+	#[test]
+	fn parse_character_id_from_str() {
+		let url = "https://www.dndbeyond.com/profile/Kinrany/characters/31859887";
+	}
 }
